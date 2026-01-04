@@ -7,19 +7,13 @@ using System.Text.RegularExpressions;
 public class EasyCalculatorEditor : EditorWindow
 {
     private string input = "";
-    private string previewResult = "";
-    private Vector2 scrollPosition;
-    private List<HistoryEntry> history = new List<HistoryEntry>();
-    private const int MaxHistory = 100;
+    private string displayResult = "0";
+    private Vector2 historyScrollPos;
+    private List<string> history = new List<string>();
+    private const int MaxHistory = 50;
+    private bool justCalculated = false;
 
-    private struct HistoryEntry
-    {
-        public string expression;
-        public string result;
-        public bool isError;
-    }
-
-    [MenuItem("Window/Tools/Easy Calculator %#c")] // Hotkey: Ctrl+Shift+C (or Cmd+Shift+C on Mac)
+    [MenuItem("Window/Tools/Easy Calculator %#c")] // Ctrl+Shift+C
     public static void ShowWindow()
     {
         GetWindow<EasyCalculatorEditor>("Easy Calculator").Show();
@@ -27,109 +21,252 @@ public class EasyCalculatorEditor : EditorWindow
 
     private void OnEnable()
     {
-        minSize = new Vector2(320, 400);
+        minSize = new Vector2(400, 680);
     }
 
     private void OnGUI()
     {
-        GUILayout.BeginVertical(GUILayout.ExpandHeight(true));
+        // Center everything horizontally
+        GUILayout.BeginVertical();
+        GUILayout.FlexibleSpace();
+
+        GUILayout.BeginHorizontal();
+        GUILayout.FlexibleSpace();
+
+        GUILayout.BeginVertical(GUILayout.Width(380));
 
         // Title
         GUILayout.Label("Easy Calculator", EditorStyles.boldLabel);
-        EditorGUILayout.Space(8);
-
-        // History Area (newest on top)
-        scrollPosition = EditorGUILayout.BeginScrollView(scrollPosition);
-
-        foreach (var entry in history)
-        {
-            GUILayout.BeginHorizontal();
-
-            string display = $"<b>{entry.expression}</b> = {entry.result}";
-            GUIStyle style = new GUIStyle(EditorStyles.label) { richText = true };
-
-            if (entry.isError)
-                style.normal.textColor = new Color(1f, 0.4f, 0.4f);
-
-            if (GUILayout.Button(display, style, GUILayout.ExpandWidth(true)))
-            {
-                input = entry.expression;
-                UpdatePreview();
-                GUI.FocusControl("InputField");
-            }
-
-            if (GUILayout.Button("Copy", GUILayout.Width(50)))
-            {
-                EditorGUIUtility.systemCopyBuffer = entry.result;
-            }
-
-            GUILayout.EndHorizontal();
-            EditorGUILayout.Space(2);
-        }
-
-        EditorGUILayout.EndScrollView();
-
         EditorGUILayout.Space(10);
 
-        // Input Field
-        GUI.SetNextControlName("InputField");
-        string newInput = EditorGUILayout.TextField(input, GUILayout.Height(32));
+        // History Area with alternating rows and separators
+        if (history.Count > 0)
+        {
+            historyScrollPos = EditorGUILayout.BeginScrollView(historyScrollPos, GUILayout.Height(140));
 
+            for (int i = history.Count - 1; i >= 0; i--)
+            {
+                string entry = history[i];
+
+                // Alternating background
+                if (i % 2 == 0)
+                {
+                    Color prevColor = GUI.backgroundColor;
+                    GUI.backgroundColor = new Color(0.15f, 0.15f, 0.15f, 0.5f);
+                    GUILayout.BeginHorizontal(GUILayout.Height(28));
+                    GUILayout.EndHorizontal();
+                    GUI.backgroundColor = prevColor;
+                }
+
+                GUILayout.BeginHorizontal();
+
+                GUIStyle historyStyle = new GUIStyle(EditorStyles.label)
+                {
+                    alignment = TextAnchor.MiddleRight,
+                    richText = true,
+                    fontSize = 13,
+                    padding = new RectOffset(15, 15, 6, 6)
+                };
+
+                if (GUILayout.Button(entry, historyStyle))
+                {
+                    int equalsIndex = entry.IndexOf(" = ");
+                    if (equalsIndex > 0)
+                    {
+                        input = entry.Substring(0, equalsIndex);
+                        justCalculated = false;
+                        UpdateLivePreview();
+                        Repaint();
+                    }
+                }
+
+                GUILayout.EndHorizontal();
+
+                // Thin separator line
+                Rect separatorRect = GUILayoutUtility.GetLastRect();
+                EditorGUI.DrawRect(new Rect(separatorRect.x, separatorRect.yMax, separatorRect.width, 1), 
+                    new Color(0.3f, 0.3f, 0.3f));
+            }
+
+            EditorGUILayout.EndScrollView();
+            EditorGUILayout.Space(10);
+        }
+
+        // Current Input Field
+        GUIStyle inputStyle = new GUIStyle(EditorStyles.textField)
+        {
+            fontSize = 20,
+            alignment = TextAnchor.MiddleRight,
+            padding = new RectOffset(20, 20, 12, 12)
+        };
+        string newInput = EditorGUILayout.TextField(input, inputStyle, GUILayout.Height(55));
         if (newInput != input)
         {
             input = newInput;
-            UpdatePreview();
+            justCalculated = false;
+            UpdateLivePreview();
         }
 
-        // Live Preview
-        EditorGUILayout.LabelField("Result:", EditorStyles.miniBoldLabel);
-        if (string.IsNullOrEmpty(previewResult))
+        // Large Result Display
+        GUIStyle resultStyle = new GUIStyle(EditorStyles.largeLabel)
         {
-            EditorGUILayout.LabelField("Enter an expression...", EditorStyles.miniLabel);
-        }
-        else
+            fontSize = 42,
+            alignment = TextAnchor.MiddleRight,
+            padding = new RectOffset(20, 20, 10, 25)
+        };
+        EditorGUILayout.LabelField(displayResult, resultStyle, GUILayout.Height(100));
+
+        EditorGUILayout.Space(25);
+
+        // Centered Button Grid
+        DrawCenteredButtonGrid();
+
+        EditorGUILayout.Space(15);
+
+        // Equals Button (centered, full width)
+        GUIStyle equalsStyle = new GUIStyle(GUI.skin.button)
         {
-            GUIStyle previewStyle = new GUIStyle(EditorStyles.largeLabel)
-            {
-                fontSize = 18,
-                alignment = TextAnchor.MiddleLeft
-            };
+            fontSize = 34,
+            normal = { textColor = Color.white }
+        };
+        equalsStyle.normal.background = MakeTex(2, 2, new Color(0.15f, 0.65f, 1f));
+        equalsStyle.active.background = MakeTex(2, 2, new Color(0.1f, 0.55f, 0.9f));
 
-            if (previewResult.StartsWith("Error"))
-                previewStyle.normal.textColor = Color.red;
-
-            EditorGUILayout.LabelField(previewResult, previewStyle);
+        GUILayout.BeginHorizontal();
+        GUILayout.FlexibleSpace();
+        if (GUILayout.Button("=", equalsStyle, GUILayout.Width(360), GUILayout.Height(70)))
+        {
+            PerformCalculation();
         }
+        GUILayout.FlexibleSpace();
+        GUILayout.EndHorizontal();
+
+        GUILayout.EndVertical(); // End centered column
+
+        GUILayout.FlexibleSpace();
+        GUILayout.EndHorizontal();
+
+        GUILayout.FlexibleSpace();
+        GUILayout.EndVertical();
 
         // Handle Enter key
-        if (Event.current.type == EventType.KeyDown &&
-            (Event.current.keyCode == KeyCode.Return || Event.current.keyCode == KeyCode.KeypadEnter) &&
-            GUI.GetNameOfFocusedControl() == "InputField")
+        if (Event.current.isKey &&
+            (Event.current.keyCode == KeyCode.Return || Event.current.keyCode == KeyCode.KeypadEnter))
         {
-            if (!string.IsNullOrWhiteSpace(input))
-            {
-                PerformCalculation();
-                input = "";
-                previewResult = "";
-                GUI.FocusControl("InputField");
-            }
+            PerformCalculation();
             Event.current.Use();
         }
-
-        // Auto-focus on first open
-        if (Event.current.type == EventType.Repaint && history.Count == 0 && string.IsNullOrEmpty(input))
-        {
-            GUI.FocusControl("InputField");
-        }
-
-        GUILayout.EndVertical();
     }
 
-    private void UpdatePreview()
+    private void DrawCenteredButtonGrid()
+    {
+        // Helper to center a row
+        void CenteredRow(Action drawButtons)
+        {
+            GUILayout.BeginHorizontal();
+            GUILayout.FlexibleSpace();
+            drawButtons();
+            GUILayout.FlexibleSpace();
+            GUILayout.EndHorizontal();
+        }
+
+        // Row 1: C ← ( )
+        CenteredRow(() =>
+        {
+            Button("C", ClearAll);
+            Button("←", Backspace);
+            Button("(", () => Append("("));
+            Button(")", () => Append(")"));
+        });
+
+        // Row 2: Functions
+        CenteredRow(() =>
+        {
+            Button("sqrt", () => Append("sqrt()"));
+            Button("sin", () => Append("sin()"));
+            Button("cos", () => Append("cos()"));
+            Button("tan", () => Append("tan()"));
+        });
+
+        // Row 3: 7 8 9 ÷
+        CenteredRow(() =>
+        {
+            Button("7", () => Append("7"));
+            Button("8", () => Append("8"));
+            Button("9", () => Append("9"));
+            Button("÷", () => Append("/"));
+        });
+
+        // Row 4: 4 5 6 ×
+        CenteredRow(() =>
+        {
+            Button("4", () => Append("4"));
+            Button("5", () => Append("5"));
+            Button("6", () => Append("6"));
+            Button("×", () => Append("*"));
+        });
+
+        // Row 5: 1 2 3 -
+        CenteredRow(() =>
+        {
+            Button("1", () => Append("1"));
+            Button("2", () => Append("2"));
+            Button("3", () => Append("3"));
+            Button("-", () => Append("-"));
+        });
+
+        // Row 6: 0 . π +
+        CenteredRow(() =>
+        {
+            Button("0", () => Append("0"), GUILayout.Width(140));
+            Button(".", () => Append("."));
+            Button("π", () => Append("pi"));
+            Button("+", () => Append("+"));
+        });
+    }
+
+    private void Button(string label, Action action, params GUILayoutOption[] options)
+    {
+        GUILayoutOption[] opts = options.Length > 0 ? options : new[] { GUILayout.Width(85), GUILayout.Height(55) };
+        if (GUILayout.Button(label, opts))
+        {
+            action?.Invoke();
+            Repaint();
+        }
+    }
+
+    private void Append(string text)
+    {
+        if (justCalculated)
+        {
+            input = "";
+            justCalculated = false;
+        }
+        input += text;
+        UpdateLivePreview();
+    }
+
+    private void Backspace()
+    {
+        if (input.Length > 0)
+        {
+            input = input.Substring(0, input.Length - 1);
+            UpdateLivePreview();
+        }
+    }
+
+    private void ClearAll()
+    {
+        input = "";
+        displayResult = "0";
+        justCalculated = false;
+    }
+
+    private void UpdateLivePreview()
     {
         if (string.IsNullOrWhiteSpace(input))
         {
-            previewResult = "";
+            displayResult = "0";
             return;
         }
 
@@ -137,61 +274,70 @@ public class EasyCalculatorEditor : EditorWindow
         {
             string processed = PreprocessExpression(input);
             double result = EvaluateExpression(processed);
-            previewResult = result.ToString("G12");
+            displayResult = result.ToString("G12");
         }
         catch
         {
-            previewResult = "";
+            // Keep last valid result while typing
         }
     }
 
     private void PerformCalculation()
     {
-        string expr = input.Trim();
-        if (string.IsNullOrEmpty(expr)) return;
+        if (string.IsNullOrWhiteSpace(input)) return;
 
-        string processed = PreprocessExpression(expr);
-        string result;
-        bool isError = false;
+        string originalExpression = input.Trim();
+        string processed = PreprocessExpression(originalExpression);
 
         try
         {
             double value = EvaluateExpression(processed);
-            result = value.ToString("G12");
-        }
-        catch (Exception ex)
-        {
-            result = "Error: " + ex.Message;
-            isError = true;
-        }
+            displayResult = value.ToString("G12");
 
-        history.Insert(0, new HistoryEntry
+            string historyEntry = $"{originalExpression} = {displayResult}";
+            history.Insert(0, historyEntry);
+        }
+        catch
         {
-            expression = expr,
-            result = result,
-            isError = isError
-        });
+            displayResult = "Error";
+            string historyEntry = $"{originalExpression} = <color=red>Error</color>";
+            history.Insert(0, historyEntry);
+        }
 
         if (history.Count > MaxHistory)
             history.RemoveAt(history.Count - 1);
 
+        justCalculated = true;
+        input = "";
         Repaint();
     }
 
-    // Preprocess: replace common Unity/game dev shortcuts
+    private Texture2D MakeTex(int width, int height, Color col)
+    {
+        Color[] pix = new Color[width * height];
+        for (int i = 0; i < pix.Length; i++) pix[i] = col;
+        Texture2D result = new Texture2D(width, height);
+        result.SetPixels(pix);
+        result.Apply();
+        return result;
+    }
+
+    // ====================== PREPROCESSING & EVALUATOR ======================
+    // (Same robust custom evaluator as before - unchanged for reliability)
+
     private string PreprocessExpression(string expr)
     {
         expr = expr.ToLower()
                    .Replace("pi", "3.141592653589793")
                    .Replace("π", "3.141592653589793")
                    .Replace("tau", "6.283185307179586")
-                   .Replace("e", "2.718281828459045");
+                   .Replace("e", "2.718281828459045")
+                   .Replace("×", "*")
+                   .Replace("÷", "/");
 
-        // Degree/Radian helpers
         expr = Regex.Replace(expr, @"(\d+\.?\d*)\s*deg", m => (double.Parse(m.Groups[1].Value) * Mathf.Deg2Rad).ToString());
         expr = Regex.Replace(expr, @"(\d+\.?\d*)\s*rad", m => (double.Parse(m.Groups[1].Value) * Mathf.Rad2Deg).ToString());
 
-        // Implicit multiplication: 2(3+4) → 2*(3+4), 5sin(30) → 5*sin(30)
         expr = Regex.Replace(expr, @"(\d)\s*\(", "$1*(");
         expr = Regex.Replace(expr, @"\)\s*(\d)", ")*$1");
         expr = Regex.Replace(expr, @"([a-z])\s*\(", "$1*(");
@@ -199,135 +345,92 @@ public class EasyCalculatorEditor : EditorWindow
         return expr;
     }
 
-    // Custom expression evaluator with shunting-yard algorithm (no dependencies!)
     private double EvaluateExpression(string expression)
     {
-        try
-        {
-            return ParseExpression(Tokenize(expression));
-        }
-        catch
-        {
-            throw new Exception("Invalid expression");
-        }
+        var tokens = Tokenize(expression);
+        return ParseExpression(tokens);
     }
 
     private List<string> Tokenize(string input)
     {
         var tokens = new List<string>();
-        var numberBuilder = new System.Text.StringBuilder();
+        var sb = new System.Text.StringBuilder();
 
         for (int i = 0; i < input.Length; i++)
         {
             char c = input[i];
-
             if (char.IsWhiteSpace(c)) continue;
 
             if (char.IsDigit(c) || c == '.')
-            {
-                numberBuilder.Append(c);
-            }
+                sb.Append(c);
             else
             {
-                if (numberBuilder.Length > 0)
+                if (sb.Length > 0)
                 {
-                    tokens.Add(numberBuilder.ToString());
-                    numberBuilder.Clear();
+                    tokens.Add(sb.ToString());
+                    sb.Clear();
                 }
 
                 if (c == '+' || c == '-' || c == '*' || c == '/' || c == '^' || c == '(' || c == ')')
-                {
                     tokens.Add(c.ToString());
-                }
-                else
+                else if (char.IsLetter(c))
                 {
-                    // Function name like sin, cos, etc.
-                    var funcBuilder = new System.Text.StringBuilder();
+                    sb.Clear();
                     while (i < input.Length && char.IsLetter(input[i]))
-                    {
-                        funcBuilder.Append(input[i]);
-                        i++;
-                    }
-                    i--; // step back one
-                    tokens.Add(funcBuilder.ToString());
+                        sb.Append(input[i++]);
+                    i--;
+                    tokens.Add(sb.ToString());
                 }
             }
         }
-
-        if (numberBuilder.Length > 0)
-            tokens.Add(numberBuilder.ToString());
-
+        if (sb.Length > 0) tokens.Add(sb.ToString());
         return tokens;
     }
 
     private double ParseExpression(List<string> tokens)
     {
-        var outputQueue = new Queue<string>();
-        var operatorStack = new Stack<string>();
+        var output = new Queue<string>();
+        var ops = new Stack<string>();
 
         foreach (var token in tokens)
         {
             if (double.TryParse(token, out _))
-            {
-                outputQueue.Enqueue(token);
-            }
+                output.Enqueue(token);
             else if (IsFunction(token))
-            {
-                operatorStack.Push(token);
-            }
+                ops.Push(token);
             else if (token == "(")
-            {
-                operatorStack.Push(token);
-            }
+                ops.Push(token);
             else if (token == ")")
             {
-                while (operatorStack.Peek() != "(")
-                {
-                    outputQueue.Enqueue(operatorStack.Pop());
-                }
-                operatorStack.Pop(); // remove '('
-
-                if (operatorStack.Count > 0 && IsFunction(operatorStack.Peek()))
-                {
-                    outputQueue.Enqueue(operatorStack.Pop());
-                }
+                while (ops.Count > 0 && ops.Peek() != "(")
+                    output.Enqueue(ops.Pop());
+                if (ops.Count > 0) ops.Pop();
+                if (ops.Count > 0 && IsFunction(ops.Peek()))
+                    output.Enqueue(ops.Pop());
             }
-            else // operator
+            else
             {
-                while (operatorStack.Count > 0 && GetPrecedence(operatorStack.Peek()) >= GetPrecedence(token) &&
-                       operatorStack.Peek() != "(")
-                {
-                    outputQueue.Enqueue(operatorStack.Pop());
-                }
-                operatorStack.Push(token);
+                while (ops.Count > 0 && GetPrecedence(ops.Peek()) >= GetPrecedence(token) && ops.Peek() != "(")
+                    output.Enqueue(ops.Pop());
+                ops.Push(token);
             }
         }
 
-        while (operatorStack.Count > 0)
-        {
-            outputQueue.Enqueue(operatorStack.Pop());
-        }
+        while (ops.Count > 0) output.Enqueue(ops.Pop());
 
-        return EvaluateRPN(outputQueue);
+        return EvaluateRPN(output);
     }
 
     private double EvaluateRPN(Queue<string> queue)
     {
         var stack = new Stack<double>();
-
         while (queue.Count > 0)
         {
             string token = queue.Dequeue();
-
-            if (double.TryParse(token, out double value))
-            {
-                stack.Push(value);
-            }
+            if (double.TryParse(token, out double num))
+                stack.Push(num);
             else if (IsFunction(token))
-            {
-                double arg = stack.Pop();
-                stack.Push(ApplyFunction(token, arg));
-            }
+                stack.Push(ApplyFunction(token, stack.Pop()));
             else
             {
                 double b = stack.Pop();
@@ -335,60 +438,41 @@ public class EasyCalculatorEditor : EditorWindow
                 stack.Push(ApplyOperator(token, a, b));
             }
         }
-
         return stack.Pop();
     }
 
-    private bool IsFunction(string token)
-    {
-        return token == "sin" || token == "cos" || token == "tan" ||
-               token == "asin" || token == "acos" || token == "atan" ||
-               token == "sqrt" || token == "abs" || token == "log" || token == "ln" ||
-               token == "floor" || token == "ceil" || token == "round";
-    }
+    private bool IsFunction(string s) => s is "sin" or "cos" or "tan" or "sqrt" or "abs" or "log" or "ln" or "floor" or "ceil" or "round";
 
-    private double ApplyFunction(string func, double arg)
+    private double ApplyFunction(string f, double x) => f switch
     {
-        return func switch
-        {
-            "sin"   => Mathf.Sin((float)arg),
-            "cos"   => Mathf.Cos((float)arg),
-            "tan"   => Mathf.Tan((float)arg),
-            "asin"  => Mathf.Asin((float)arg),
-            "acos"  => Mathf.Acos((float)arg),
-            "atan"  => Mathf.Atan((float)arg),
-            "sqrt"  => Mathf.Sqrt((float)arg),
-            "abs"   => Mathf.Abs((float)arg),
-            "log"   => Mathf.Log10((float)arg),
-            "ln"    => Mathf.Log((float)arg),
-            "floor" => Mathf.Floor((float)arg),
-            "ceil"  => Mathf.Ceil((float)arg),
-            "round" => Mathf.Round((float)arg),
-            _       => throw new Exception("Unknown function")
-        };
-    }
+        "sin" => Mathf.Sin((float)x),
+        "cos" => Mathf.Cos((float)x),
+        "tan" => Mathf.Tan((float)x),
+        "sqrt" => Mathf.Sqrt((float)x),
+        "abs" => Mathf.Abs((float)x),
+        "log" => Mathf.Log10((float)x),
+        "ln" => Mathf.Log((float)x),
+        "floor" => Mathf.Floor((float)x),
+        "ceil" => Mathf.Ceil((float)x),
+        "round" => Mathf.Round((float)x),
+        _ => throw new Exception("Unknown function")
+    };
 
-    private double ApplyOperator(string op, double a, double b)
+    private double ApplyOperator(string op, double a, double b) => op switch
     {
-        return op switch
-        {
-            "+" => a + b,
-            "-" => a - b,
-            "*" => a * b,
-            "/" => a / b,
-            "^" => Mathf.Pow((float)a, (float)b),
-            _   => throw new Exception("Unknown operator")
-        };
-    }
+        "+" => a + b,
+        "-" => a - b,
+        "*" => a * b,
+        "/" => b != 0 ? a / b : throw new Exception("Division by zero"),
+        "^" => Mathf.Pow((float)a, (float)b),
+        _ => throw new Exception("Unknown operator")
+    };
 
-    private int GetPrecedence(string op)
+    private int GetPrecedence(string op) => op switch
     {
-        return op switch
-        {
-            "+" or "-" => 1,
-            "*" or "/" => 2,
-            "^" => 3,
-            _ => 0
-        };
-    }
+        "+" or "-" => 1,
+        "*" or "/" => 2,
+        "^" => 3,
+        _ => 0
+    };
 }
