@@ -10,7 +10,7 @@ public class EasyCalculatorEditor : EditorWindow
     private string displayResult = "0";
     private Vector2 historyScrollPos;
     private List<string> history = new List<string>();
-    private const int MaxHistory = 50;
+    private const int MaxHistory = 100;
     private bool justCalculated = false;
 
     [MenuItem("Window/Tools/Easy Calculator %#c")] // Ctrl+Shift+C
@@ -21,15 +21,14 @@ public class EasyCalculatorEditor : EditorWindow
 
     private void OnEnable()
     {
-        minSize = new Vector2(400, 680);
+        minSize = new Vector2(400, 700);
     }
 
     private void OnGUI()
     {
-        // Center everything horizontally
+        // Center the entire calculator
         GUILayout.BeginVertical();
         GUILayout.FlexibleSpace();
-
         GUILayout.BeginHorizontal();
         GUILayout.FlexibleSpace();
 
@@ -39,10 +38,10 @@ public class EasyCalculatorEditor : EditorWindow
         GUILayout.Label("Easy Calculator", EditorStyles.boldLabel);
         EditorGUILayout.Space(10);
 
-        // History Area with alternating rows and separators
+        // History with delete button
         if (history.Count > 0)
         {
-            historyScrollPos = EditorGUILayout.BeginScrollView(historyScrollPos, GUILayout.Height(140));
+            historyScrollPos = EditorGUILayout.BeginScrollView(historyScrollPos, GUILayout.Height(150));
 
             for (int i = history.Count - 1; i >= 0; i--)
             {
@@ -51,48 +50,63 @@ public class EasyCalculatorEditor : EditorWindow
                 // Alternating background
                 if (i % 2 == 0)
                 {
-                    Color prevColor = GUI.backgroundColor;
-                    GUI.backgroundColor = new Color(0.15f, 0.15f, 0.15f, 0.5f);
-                    GUILayout.BeginHorizontal(GUILayout.Height(28));
+                    Color prev = GUI.backgroundColor;
+                    GUI.backgroundColor = new Color(0.18f, 0.18f, 0.18f);
+                    GUILayout.BeginHorizontal(GUILayout.Height(32));
                     GUILayout.EndHorizontal();
-                    GUI.backgroundColor = prevColor;
+                    GUI.backgroundColor = prev;
                 }
 
                 GUILayout.BeginHorizontal();
 
-                GUIStyle historyStyle = new GUIStyle(EditorStyles.label)
+                GUIStyle entryStyle = new GUIStyle(EditorStyles.label)
                 {
-                    alignment = TextAnchor.MiddleRight,
+                    alignment = TextAnchor.MiddleLeft,
                     richText = true,
                     fontSize = 13,
-                    padding = new RectOffset(15, 15, 6, 6)
+                    padding = new RectOffset(15, 8, 8, 8),
+                    clipping = TextClipping.Clip
                 };
 
-                if (GUILayout.Button(entry, historyStyle))
+                if (GUILayout.Button(entry, entryStyle, GUILayout.Height(32)))
                 {
-                    int equalsIndex = entry.IndexOf(" = ");
-                    if (equalsIndex > 0)
+                    int eqIndex = entry.IndexOf(" = ");
+                    if (eqIndex > 0)
                     {
-                        input = entry.Substring(0, equalsIndex);
+                        input = entry.Substring(0, eqIndex);
                         justCalculated = false;
                         UpdateLivePreview();
                         Repaint();
                     }
                 }
 
+                // Delete button (×)
+                GUIStyle deleteStyle = new GUIStyle(GUI.skin.button)
+                {
+                    fontSize = 14,
+                    fontStyle = FontStyle.Bold,
+                    alignment = TextAnchor.MiddleCenter,
+                    margin = new RectOffset(0, 10, 8, 8)
+                };
+
+                if (GUILayout.Button("×", deleteStyle, GUILayout.Width(30), GUILayout.Height(32)))
+                {
+                    history.RemoveAt(i);
+                    Repaint();
+                }
+
                 GUILayout.EndHorizontal();
 
-                // Thin separator line
-                Rect separatorRect = GUILayoutUtility.GetLastRect();
-                EditorGUI.DrawRect(new Rect(separatorRect.x, separatorRect.yMax, separatorRect.width, 1), 
-                    new Color(0.3f, 0.3f, 0.3f));
+                // Separator line
+                Rect r = GUILayoutUtility.GetLastRect();
+                EditorGUI.DrawRect(new Rect(r.x + 10, r.yMax, r.width - 20, 1), new Color(0.35f, 0.35f, 0.35f));
             }
 
             EditorGUILayout.EndScrollView();
             EditorGUILayout.Space(10);
         }
 
-        // Current Input Field
+        // Input field
         GUIStyle inputStyle = new GUIStyle(EditorStyles.textField)
         {
             fontSize = 20,
@@ -107,7 +121,7 @@ public class EasyCalculatorEditor : EditorWindow
             UpdateLivePreview();
         }
 
-        // Large Result Display
+        // Result display
         GUIStyle resultStyle = new GUIStyle(EditorStyles.largeLabel)
         {
             fontSize = 42,
@@ -118,12 +132,12 @@ public class EasyCalculatorEditor : EditorWindow
 
         EditorGUILayout.Space(25);
 
-        // Centered Button Grid
-        DrawCenteredButtonGrid();
+        // Uniform button grid (all buttons same size)
+        DrawUniformButtonGrid();
 
         EditorGUILayout.Space(15);
 
-        // Equals Button (centered, full width)
+        // Equals button (centered)
         GUIStyle equalsStyle = new GUIStyle(GUI.skin.button)
         {
             fontSize = 34,
@@ -141,16 +155,15 @@ public class EasyCalculatorEditor : EditorWindow
         GUILayout.FlexibleSpace();
         GUILayout.EndHorizontal();
 
-        GUILayout.EndVertical(); // End centered column
+        GUILayout.EndVertical(); // End main column
 
         GUILayout.FlexibleSpace();
         GUILayout.EndHorizontal();
-
         GUILayout.FlexibleSpace();
         GUILayout.EndVertical();
 
-        // Handle Enter key
-        if (Event.current.isKey &&
+        // Enter key = calculate
+        if (Event.current.isKey && 
             (Event.current.keyCode == KeyCode.Return || Event.current.keyCode == KeyCode.KeypadEnter))
         {
             PerformCalculation();
@@ -158,81 +171,40 @@ public class EasyCalculatorEditor : EditorWindow
         }
     }
 
-    private void DrawCenteredButtonGrid()
+    private void DrawUniformButtonGrid()
     {
-        // Helper to center a row
-        void CenteredRow(Action drawButtons)
+        void Row(params (string label, Action action)[] buttons)
         {
             GUILayout.BeginHorizontal();
             GUILayout.FlexibleSpace();
-            drawButtons();
+            foreach (var (label, action) in buttons)
+            {
+                if (GUILayout.Button(label, GUILayout.Width(85), GUILayout.Height(55)))
+                {
+                    action?.Invoke();
+                    Repaint();
+                }
+            }
             GUILayout.FlexibleSpace();
             GUILayout.EndHorizontal();
+            EditorGUILayout.Space(8);
         }
 
-        // Row 1: C ← ( )
-        CenteredRow(() =>
-        {
-            Button("C", ClearAll);
-            Button("←", Backspace);
-            Button("(", () => Append("("));
-            Button(")", () => Append(")"));
-        });
+        // All buttons are now exactly 85x55
+        Row(("C", ClearAll), ("←", Backspace), ("(", () => Append("(")), (")", () => Append(")")));
 
-        // Row 2: Functions
-        CenteredRow(() =>
-        {
-            Button("sqrt", () => Append("sqrt()"));
-            Button("sin", () => Append("sin()"));
-            Button("cos", () => Append("cos()"));
-            Button("tan", () => Append("tan()"));
-        });
+        Row(("sqrt", () => AppendFunction("sqrt")), 
+            ("sin", () => AppendFunction("sin")), 
+            ("cos", () => AppendFunction("cos")), 
+            ("tan", () => AppendFunction("tan")));
 
-        // Row 3: 7 8 9 ÷
-        CenteredRow(() =>
-        {
-            Button("7", () => Append("7"));
-            Button("8", () => Append("8"));
-            Button("9", () => Append("9"));
-            Button("÷", () => Append("/"));
-        });
+        Row(("7", () => Append("7")), ("8", () => Append("8")), ("9", () => Append("9")), ("÷", () => Append("/")));
 
-        // Row 4: 4 5 6 ×
-        CenteredRow(() =>
-        {
-            Button("4", () => Append("4"));
-            Button("5", () => Append("5"));
-            Button("6", () => Append("6"));
-            Button("×", () => Append("*"));
-        });
+        Row(("4", () => Append("4")), ("5", () => Append("5")), ("6", () => Append("6")), ("×", () => Append("*")));
 
-        // Row 5: 1 2 3 -
-        CenteredRow(() =>
-        {
-            Button("1", () => Append("1"));
-            Button("2", () => Append("2"));
-            Button("3", () => Append("3"));
-            Button("-", () => Append("-"));
-        });
+        Row(("1", () => Append("1")), ("2", () => Append("2")), ("3", () => Append("3")), ("-", () => Append("-")));
 
-        // Row 6: 0 . π +
-        CenteredRow(() =>
-        {
-            Button("0", () => Append("0"), GUILayout.Width(140));
-            Button(".", () => Append("."));
-            Button("π", () => Append("pi"));
-            Button("+", () => Append("+"));
-        });
-    }
-
-    private void Button(string label, Action action, params GUILayoutOption[] options)
-    {
-        GUILayoutOption[] opts = options.Length > 0 ? options : new[] { GUILayout.Width(85), GUILayout.Height(55) };
-        if (GUILayout.Button(label, opts))
-        {
-            action?.Invoke();
-            Repaint();
-        }
+        Row(("0", () => Append("0")), (".", () => Append(".")), ("π", () => Append("pi")), ("+", () => Append("+")));
     }
 
     private void Append(string text)
@@ -244,6 +216,18 @@ public class EasyCalculatorEditor : EditorWindow
         }
         input += text;
         UpdateLivePreview();
+    }
+
+    private void AppendFunction(string func)
+    {
+        if (justCalculated)
+        {
+            input = "";
+            justCalculated = false;
+        }
+        input += func + "(";
+        UpdateLivePreview();
+        // Optional: move cursor inside parentheses - not needed in IMGUI text field
     }
 
     private void Backspace()
@@ -278,7 +262,7 @@ public class EasyCalculatorEditor : EditorWindow
         }
         catch
         {
-            // Keep last valid result while typing
+            // Don't show error during typing
         }
     }
 
@@ -286,45 +270,44 @@ public class EasyCalculatorEditor : EditorWindow
     {
         if (string.IsNullOrWhiteSpace(input)) return;
 
-        string originalExpression = input.Trim();
-        string processed = PreprocessExpression(originalExpression);
+        string original = input.Trim();
+        string processed = PreprocessExpression(original);
 
+        string result;
         try
         {
             double value = EvaluateExpression(processed);
-            displayResult = value.ToString("G12");
-
-            string historyEntry = $"{originalExpression} = {displayResult}";
-            history.Insert(0, historyEntry);
+            result = value.ToString("G12");
+            displayResult = result;
         }
         catch
         {
+            result = "<color=red>Error</color>";
             displayResult = "Error";
-            string historyEntry = $"{originalExpression} = <color=red>Error</color>";
-            history.Insert(0, historyEntry);
         }
 
-        if (history.Count > MaxHistory)
-            history.RemoveAt(history.Count - 1);
+        string historyEntry = $"{original} = {result.Replace("<color=red>", "").Replace("</color>", "")}";
+        if (result.Contains("Error")) historyEntry = $"{original} = <color=red>Error</color>";
+
+        history.Insert(0, historyEntry);
+        if (history.Count > MaxHistory) history.RemoveAt(history.Count - 1);
 
         justCalculated = true;
         input = "";
         Repaint();
     }
 
-    private Texture2D MakeTex(int width, int height, Color col)
+    private Texture2D MakeTex(int w, int h, Color col)
     {
-        Color[] pix = new Color[width * height];
+        Color[] pix = new Color[w * h];
         for (int i = 0; i < pix.Length; i++) pix[i] = col;
-        Texture2D result = new Texture2D(width, height);
-        result.SetPixels(pix);
-        result.Apply();
-        return result;
+        Texture2D tex = new Texture2D(w, h);
+        tex.SetPixels(pix);
+        tex.Apply();
+        return tex;
     }
 
-    // ====================== PREPROCESSING & EVALUATOR ======================
-    // (Same robust custom evaluator as before - unchanged for reliability)
-
+    // ====================== PREPROCESSING ======================
     private string PreprocessExpression(string expr)
     {
         expr = expr.ToLower()
@@ -335,16 +318,18 @@ public class EasyCalculatorEditor : EditorWindow
                    .Replace("×", "*")
                    .Replace("÷", "/");
 
+        // deg/rad
         expr = Regex.Replace(expr, @"(\d+\.?\d*)\s*deg", m => (double.Parse(m.Groups[1].Value) * Mathf.Deg2Rad).ToString());
         expr = Regex.Replace(expr, @"(\d+\.?\d*)\s*rad", m => (double.Parse(m.Groups[1].Value) * Mathf.Rad2Deg).ToString());
 
-        expr = Regex.Replace(expr, @"(\d)\s*\(", "$1*(");
-        expr = Regex.Replace(expr, @"\)\s*(\d)", ")*$1");
-        expr = Regex.Replace(expr, @"([a-z])\s*\(", "$1*(");
+        // Implicit multiplication: 2sin → 2*sin, (3)4 → (3)*4
+        expr = Regex.Replace(expr, @"(\d)\s*([a-z(])", "$1*$2");
+        expr = Regex.Replace(expr, @"([)\d])\s*([a-z(])", "$1*$2");
 
         return expr;
     }
 
+    // ====================== EVALUATOR (Shunting-Yard) ======================
     private double EvaluateExpression(string expression)
     {
         var tokens = Tokenize(expression);
